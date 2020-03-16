@@ -1,4 +1,4 @@
-module ckb-explorer
+module ckb-exporter
 
 go 1.13
 

@@ -60,7 +60,7 @@ func ready() {
 }
 
 func startInFile() {
-	log.Printf("[INFO][ckb-explorer] start monitoring logfile %s", CkbLogToFile)
+	log.Printf("[INFO][ckb-exporter] start monitoring logfile %s", CkbLogToFile)
 	tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
 		ReOpen: true,
 		Follow: true,
@@ -73,7 +73,7 @@ func startInFile() {
 
 	for line := range tailer.Lines {
 		if line.Err != nil {
-			log.Printf("[ERROR][ckb-explorer] error on tailing %v", line.Err)
+			log.Printf("[ERROR][ckb-exporter] error on tailing %v", line.Err)
 			continue
 		}
 		handle(line.Text)
@@ -81,7 +81,7 @@ func startInFile() {
 }
 
 func startInJournal() {
-	log.Printf("[INFO][ckb-explorer] start monitoring service %s", CkbLogToJournal)
+	log.Printf("[INFO][ckb-exporter] start monitoring service %s", CkbLogToJournal)
 }
 
 func handle(line string) {
@@ -92,7 +92,7 @@ func handle(line string) {
 
 	err := json.Unmarshal([]byte(strings.TrimSpace(line[index+12:])), &metric)
 	if err != nil {
-		log.Printf("[ERROR][ckb-explorer] error on unmarshal %s: %v", line, err)
+		log.Printf("[ERROR][ckb-exporter] error on unmarshal %s: %v", line, err)
 		return
 	}
 
