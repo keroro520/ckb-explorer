@@ -8,9 +8,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"io"
 	"log"
 	"net/http"
 	"strings"
+)
+
+const (
+	Namespace string = "ckb"
 )
 
 var (
@@ -26,8 +31,8 @@ var (
 
 type Metric struct {
 	Topic string
-	tags map[string]string
-	fields map[string]uint64
+	Tags map[string]string
+	Fields map[string]uint64
 }
 
 type InstrumentSet struct {
@@ -36,19 +41,22 @@ type InstrumentSet struct {
 	histogram prometheus.Histogram
 }
 
-func NewInstrumentSet(name string) InstrumentSet {
+func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
 	return InstrumentSet{
-		counter:   promauto.NewCounter(prometheus.CounterOpts{Name: name}),
-		gauge:     promauto.NewGauge(prometheus.GaugeOpts{Name: name}),
-		histogram: promauto.NewHistogram(prometheus.HistogramOpts{Name: name}),
+		counter:   promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: Namespace, Subsystem: topic, Name: name,
+			ConstLabels: tags,
+		}),
+		// gauge:     promauto.NewGauge(prometheus.GaugeOpts{Name: name}),
+		// histogram: promauto.NewHistogram(prometheus.HistogramOpts{Name: name}),
 	}
 }
 
 func (it *InstrumentSet) Update(value uint64) {
 	float := float64(value)
 	it.counter.Add(float)
-	it.gauge.Set(float)
-	it.histogram.Observe(float)
+	// it.gauge.Set(float)
+	// it.histogram.Observe(float)
 }
 
 func ready() {
@@ -58,11 +66,17 @@ func ready() {
 }
 
 func StartInFile() {
-	tailer, err := tail.TailFile(CkbLogToFile, tail.Config{})
+	tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
+		ReOpen: true,
+		Follow: true,
+		Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
+		Logger: tail.DiscardingLogger,
+	})
 	if err != nil {
 		log.Fatalf("error on tailing %s: %v", CkbLogToFile, err)
 	}
-	for line := range tailer.Lines{
+
+	for line := range tailer.Lines {
 		if line.Err != nil {
 			log.Printf("[ERROR][ckb-explorer] error on tailing %v", line.Err)
 			continue
@@ -81,16 +95,16 @@ func handle(line string) {
 		return
 	}
 
-	err := json.Unmarshal([]byte(line[index+12:]), &metric)
+	err := json.Unmarshal([]byte(strings.TrimSpace(line[index+12:])), &metric)
 	if err != nil {
 		log.Printf("[ERROR][ckb-explorer] error on unmarshal %s: %v", line, err)
 		return
 	}
 
-	for field, value := range metric.fields {
-		name := fmt.Sprintf("%s_%s", metric.Topic, field)
+	for field, value := range metric.Fields {
+		name := fmt.Sprintf("%s_%s_%s", Namespace, metric.Topic, field)
 		if _, ok := seen[name]; !ok {
-			seen[name] = NewInstrumentSet(name)
+			seen[name] = NewInstrumentSet(metric.Topic, field, metric.Tags)
 		}
 		set := seen[name]
 		set.Update(value)
@@ -98,9 +112,10 @@ func handle(line string) {
 }
 
 func init() {
-	flag.StringVar(&Listen, "listen", "127.0.0.1:1943", "exported address to prometheus server")
+	flag.StringVar(&Listen, "listen", "127.0.0.1:8316", "exported address to prometheus server")
 	flag.StringVar(&CkbLogToFile, "ckb-log-to-file", "", "the path to ckb log file")
 	flag.StringVar(&CkbLogToJournal, "ckb-log-to-journal", "", "the service name to ckb")
+	flag.Parse()
 	seen = make(map[string]InstrumentSet)
 }
 
