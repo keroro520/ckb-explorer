@@ -4,22 +4,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/hpcloud/tail"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"io"
 	"log"
 	"net/http"
 	"strings"
-)
 
-const (
-	Namespace string = "ckb"
+	"github.com/hpcloud/tail"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
 	// CommandLine Flags
+	Namespace string
 	Listen string
 	CkbLogToFile string
 	CkbLogToJournal string
@@ -36,36 +34,33 @@ type Metric struct {
 }
 
 type InstrumentSet struct {
-	counter prometheus.Counter
-	gauge prometheus.Gauge
+	// counter prometheus.Counter
+	// gauge prometheus.Gauge
 	histogram prometheus.Histogram
 }
 
 func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
 	return InstrumentSet{
-		counter:   promauto.NewCounter(prometheus.CounterOpts{
+		histogram:   promauto.NewHistogram(prometheus.HistogramOpts{
 			Namespace: Namespace, Subsystem: topic, Name: name,
 			ConstLabels: tags,
 		}),
-		// gauge:     promauto.NewGauge(prometheus.GaugeOpts{Name: name}),
-		// histogram: promauto.NewHistogram(prometheus.HistogramOpts{Name: name}),
 	}
 }
 
 func (it *InstrumentSet) Update(value uint64) {
 	float := float64(value)
-	it.counter.Add(float)
-	// it.gauge.Set(float)
-	// it.histogram.Observe(float)
+	it.histogram.Observe(float)
 }
 
 func ready() {
 	if (len(CkbLogToFile) == 0) == (len(CkbLogToJournal) == 0) {
-		log.Fatal("Must provide only one of ckb-log-to-file or ckb-log-to-journal")
+		log.Fatal("Must provide only one of ckb-log-to-file and ckb-log-to-journal")
 	}
 }
 
-func StartInFile() {
+func startInFile() {
+	log.Printf("[INFO][ckb-explorer] start monitoring logfile %s", CkbLogToFile)
 	tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
 		ReOpen: true,
 		Follow: true,
@@ -85,8 +80,8 @@ func StartInFile() {
 	}
 }
 
-func StartInJournal() {
-
+func startInJournal() {
+	log.Printf("[INFO][ckb-explorer] start monitoring service %s", CkbLogToJournal)
 }
 
 func handle(line string) {
@@ -102,7 +97,7 @@ func handle(line string) {
 	}
 
 	for field, value := range metric.Fields {
-		name := fmt.Sprintf("%s_%s_%s", Namespace, metric.Topic, field)
+		name := fmt.Sprintf("%s_%s", metric.Topic, field)
 		if _, ok := seen[name]; !ok {
 			seen[name] = NewInstrumentSet(metric.Topic, field, metric.Tags)
 		}
@@ -112,6 +107,7 @@ func handle(line string) {
 }
 
 func init() {
+	flag.StringVar(&Namespace, "namespace", "ckb", "namespace of metrics")
 	flag.StringVar(&Listen, "listen", "127.0.0.1:8316", "exported address to prometheus server")
 	flag.StringVar(&CkbLogToFile, "ckb-log-to-file", "", "the path to ckb log file")
 	flag.StringVar(&CkbLogToJournal, "ckb-log-to-journal", "", "the service name to ckb")
@@ -121,11 +117,13 @@ func init() {
 
 func main() {
 	ready()
+
 	if len(CkbLogToFile) != 0 {
-		go StartInFile()
+		go startInFile()
 	} else {
-		go StartInJournal()
+		go startInJournal()
 	}
+
 	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(Listen, nil))
 }
