@@ -8,7 +8,7 @@ set -e
 PLATFORMS=("$@")
 
 VERSION="${TRAVIS_TAG}"
-: "${VERSION:=$(git describe --tags --always)}"
+: "${VERSION:=$(git describe --tags $(git rev-list --tags --max-count=1))}"
 GLDFLAGS=${GLDFLAGS:-}
 GLDFLAGS="$GLDFLAGS -X main.version=$VERSION"
 GOFLAGS=${GOFLAGS:-}
