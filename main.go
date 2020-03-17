@@ -41,15 +41,15 @@ type InstrumentSet struct {
 
 func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
 	// TODO refactor NamespaceHistogram/NamespaceGauge
-	namespaceH := fmt.Sprintf("%s_hist", Namespace)
 	namespaceG := fmt.Sprintf("%s_gauge", Namespace)
+	namespaceH := fmt.Sprintf("%s_hist", Namespace)
 	return InstrumentSet{
-		histogram:   promauto.NewHistogram(prometheus.HistogramOpts{
-			Namespace: namespaceH, Subsystem: topic, Name: name,
-			ConstLabels: tags,
-		}),
 		gauge:   promauto.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespaceG, Subsystem: topic, Name: name,
+			ConstLabels: tags,
+		}),
+		histogram:   promauto.NewHistogram(prometheus.HistogramOpts{
+			Namespace: namespaceH, Subsystem: topic, Name: name,
 			ConstLabels: tags,
 		}),
 	}
@@ -57,6 +57,7 @@ func NewInstrumentSet(topic string, name string, tags map[string]string) Instrum
 
 func (it *InstrumentSet) Update(value uint64) {
 	float := float64(value)
+	it.gauge.Set(float)
 	it.histogram.Observe(float)
 }
 
