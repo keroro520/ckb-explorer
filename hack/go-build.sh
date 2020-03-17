@@ -23,7 +23,7 @@ for PLATFORM in "${PLATFORMS[@]}"; do
     ARCHIVE="${SUBDIRECTORY}.tar.gz"
 
     mkdir -p "releases/${SUBDIRECTORY}"
-    CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build ${GOFLAGS} -ldflags "${GLDFLAGS}" -o "releases/${FILE}" main.go
+    CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build ${GOFLAGS} -ldflags "${GLDFLAGS}" -o "releases/${FILE}"
     tar -C releases -cvzf releases/${ARCHIVE} ${FILE}
     rm -rf releases/${SUBDIRECTORY}
 done
