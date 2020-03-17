@@ -23,7 +23,6 @@ var (
 	CkbLogToJournal string
 
 	// Global Variables
-	metric Metric
 	seen map[string]InstrumentSet
 )
 
@@ -90,6 +89,7 @@ func handle(line string) {
 		return
 	}
 
+	var metric Metric
 	err := json.Unmarshal([]byte(strings.TrimSpace(line[index+12:])), &metric)
 	if err != nil {
 		log.Printf("[ERROR][ckb_exporter] error on unmarshal %s: %v", line, err)
