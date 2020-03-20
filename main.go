@@ -18,7 +18,6 @@ import (
 var (
 	// CommandLine Flags
 	Namespace string
-
 	Listen string
 	CkbLogToFile string
 	CkbLogToJournal string
@@ -34,16 +33,21 @@ type Metric struct {
 }
 
 type InstrumentSet struct {
-	// counter prometheus.Counter
+	counter prometheus.Counter
 	gauge prometheus.Gauge
 	histogram prometheus.Histogram
 }
 
 func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
 	// TODO refactor NamespaceHistogram/NamespaceGauge
+	namespaceC := fmt.Sprintf("%s_counter", Namespace)
 	namespaceG := fmt.Sprintf("%s_gauge", Namespace)
 	namespaceH := fmt.Sprintf("%s_hist", Namespace)
 	return InstrumentSet{
+		counter:   promauto.NewCounter(prometheus.CounterOpts{
+			Namespace: namespaceC, Subsystem: topic, Name: name,
+			ConstLabels: tags,
+		}),
 		gauge:   promauto.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespaceG, Subsystem: topic, Name: name,
 			ConstLabels: tags,
@@ -57,6 +61,7 @@ func NewInstrumentSet(topic string, name string, tags map[string]string) Instrum
 
 func (it *InstrumentSet) Update(value uint64) {
 	float := float64(value)
+	it.counter.Add(float)
 	it.gauge.Set(float)
 	it.histogram.Observe(float)
 }
