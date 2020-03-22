@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/hpcloud/tail"
@@ -39,7 +40,6 @@ type InstrumentSet struct {
 }
 
 func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
-	// TODO refactor NamespaceHistogram/NamespaceGauge
 	namespaceC := fmt.Sprintf("%s_counter", Namespace)
 	namespaceG := fmt.Sprintf("%s_gauge", Namespace)
 	namespaceH := fmt.Sprintf("%s_hist", Namespace)
@@ -137,6 +137,17 @@ func main() {
 	} else {
 		go startInJournal()
 	}
+
+	nodename, err := os.Hostname()
+	if err != nil {
+		nodename = "-"
+	}
+	labels := make(map[string]string)
+	labels["nodename"] = nodename
+	promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "node", Subsystem: "uname", Name: "info",
+		ConstLabels: labels,
+	})
 
 	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(Listen, nil))
