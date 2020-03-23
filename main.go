@@ -74,22 +74,24 @@ func ready() {
 
 func startInFile() {
 	log.Printf("[INFO][ckb_exporter] start monitoring logfile %s", CkbLogToFile)
-	tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
-		ReOpen: true,
-		Follow: true,
-		Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
-		Logger: tail.DiscardingLogger,
-	})
-	if err != nil {
-		log.Fatalf("error on tailing %s: %v", CkbLogToFile, err)
-	}
-
-	for line := range tailer.Lines {
-		if line.Err != nil {
-			log.Printf("[ERROR][ckb_exporter] error on tailing %v", line.Err)
-			continue
+	for {
+		tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
+			ReOpen: true,
+			Follow: true,
+			Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
+			Logger: tail.DiscardingLogger,
+		})
+		if err != nil {
+			log.Fatalf("error on tailing %s: %v", CkbLogToFile, err)
 		}
-		handle(line.Text)
+		for line := range tailer.Lines {
+			if line.Err != nil {
+				log.Printf("[ERROR][ckb_exporter] error on tailing %v", line.Err)
+				continue
+			}
+			handle(line.Text)
+		}
+		log.Printf("[INFO][ckb_exporter] reopen %s", CkbLogToFile)
 	}
 }
 
