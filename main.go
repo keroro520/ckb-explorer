@@ -25,6 +25,7 @@ var (
 	CkbLogToJournal string
 
 	// Global Variables
+	metrics_chan            chan Metric
 	seen                    map[string]InstrumentSet
 	propagations            map[string]Propagation
 	last_prune_propagations time.Time
@@ -93,25 +94,37 @@ func ready() {
 	}
 }
 
-func startInFile() {
-	log.Printf("[INFO][ckb_exporter] start monitoring logfile %s", CkbLogToFile)
+func startInFile(filepath string) {
+	log.Printf("[INFO][ckb_exporter] start monitoring logfile %s", filepath)
 	for {
-		tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
+		tailer, err := tail.TailFile(filepath, tail.Config{
 			ReOpen:   true,
 			Follow:   true,
 			Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
 		})
 		if err != nil {
-			log.Fatalf("error on tailing %s: %v", CkbLogToFile, err)
+			log.Fatalf("error on tailing %s: %v", filepath, err)
 		}
 		for line := range tailer.Lines {
 			if line.Err != nil {
 				log.Printf("[ERROR][ckb_exporter] error on tailing %v", line.Err)
 				continue
 			}
-			handle(line.Text)
+			index := strings.Index(line.Text, "ckb-metrics")
+			if index == -1 {
+				continue
+			}
+
+			var metric Metric
+			err := json.Unmarshal([]byte(strings.TrimSpace(line.Text[index+12:])), &metric)
+			if err != nil {
+				log.Printf("[ERROR][ckb_exporter] error on unmarshal %s: %v", line.Text, err)
+				continue
+			}
+
+			metrics_chan <- metric
 		}
-		log.Printf("[INFO][ckb_exporter] reopen %s", CkbLogToFile)
+		log.Printf("[INFO][ckb_exporter] reopen %s", filepath)
 	}
 }
 
@@ -119,24 +132,17 @@ func startInJournal() {
 	log.Printf("[INFO][ckb_exporter] start monitoring service %s", CkbLogToJournal)
 }
 
-func handle(line string) {
-	index := strings.Index(line, "ckb-metrics")
-	if index == -1 {
-		return
+func startHandle() {
+	for metric := range metrics_chan {
+		if metric.Topic == "propagation" {
+			handle_propagation(metric)
+		} else {
+			handle_normal(metric)
+		}
 	}
+}
 
-	var metric Metric
-	err := json.Unmarshal([]byte(strings.TrimSpace(line[index+12:])), &metric)
-	if err != nil {
-		log.Printf("[ERROR][ckb_exporter] error on unmarshal %s: %v", line, err)
-		return
-	}
-
-	if metric.Topic == "propagation" {
-		handle_propagation(metric)
-		return
-	}
-
+func handle_normal(metric Metric) {
 	for field, value := range metric.Fields {
 		name := fmt.Sprintf("%s_%s", metric.Topic, field)
 		if _, ok := seen[name]; !ok {
@@ -212,6 +218,7 @@ func init() {
 	flag.StringVar(&CkbLogToJournal, "ckb-log-to-journal", "", "the service name to ckb")
 	flag.Parse()
 
+	metrics_chan = make(chan Metric)
 	seen = make(map[string]InstrumentSet)
 	propagations = make(map[string]Propagation)
 	last_prune_propagations = time.Now()
@@ -221,10 +228,15 @@ func main() {
 	ready()
 
 	if len(CkbLogToFile) != 0 {
-		go startInFile()
+		for _, filepath := range strings.Split(CkbLogToFile, ",") {
+			filepath = strings.TrimSpace(filepath)
+			go startInFile(filepath)
+		}
 	} else {
 		go startInJournal()
 	}
+
+	go startHandle()
 
 	nodename, err := os.Hostname()
 	if err != nil {
