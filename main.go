@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hpcloud/tail"
 	"github.com/prometheus/client_golang/prometheus"
@@ -18,25 +19,38 @@ import (
 
 var (
 	// CommandLine Flags
-	Namespace string
-	Listen string
-	CkbLogToFile string
+	Namespace       string
+	Listen          string
+	CkbLogToFile    string
 	CkbLogToJournal string
 
 	// Global Variables
-	seen map[string]InstrumentSet
+	seen                    map[string]InstrumentSet
+	propagations            map[string]Propagation
+	last_prune_propagations time.Time
+
+	PROPAGATION_PERCENTAGES = [...]uint64{50, 80, 90, 95, 99}
+)
+
+const (
+	PROPAGATION_THRESHOLD uint64 = 50
 )
 
 type Metric struct {
-	Topic string
-	Tags map[string]string
+	Topic  string
+	Tags   map[string]string
 	Fields map[string]uint64
 }
 
 type InstrumentSet struct {
-	counter prometheus.Counter
-	gauge prometheus.Gauge
+	counter   prometheus.Counter
+	gauge     prometheus.Gauge
 	histogram prometheus.Histogram
+}
+
+type Propagation struct {
+	timestamp    time.Time
+	accumulative uint64
 }
 
 func NewInstrumentSet(topic string, name string, tags map[string]string) InstrumentSet {
@@ -44,15 +58,15 @@ func NewInstrumentSet(topic string, name string, tags map[string]string) Instrum
 	namespaceG := fmt.Sprintf("%s_gauge", Namespace)
 	namespaceH := fmt.Sprintf("%s_hist", Namespace)
 	return InstrumentSet{
-		counter:   promauto.NewCounter(prometheus.CounterOpts{
+		counter: promauto.NewCounter(prometheus.CounterOpts{
 			Namespace: namespaceC, Subsystem: topic, Name: name,
 			ConstLabels: tags,
 		}),
-		gauge:   promauto.NewGauge(prometheus.GaugeOpts{
+		gauge: promauto.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespaceG, Subsystem: topic, Name: name,
 			ConstLabels: tags,
 		}),
-		histogram:   promauto.NewHistogram(prometheus.HistogramOpts{
+		histogram: promauto.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespaceH, Subsystem: topic, Name: name,
 			ConstLabels: tags,
 		}),
@@ -66,6 +80,13 @@ func (it *InstrumentSet) Update(value uint64) {
 	it.histogram.Observe(float)
 }
 
+func NewPropagation(timestamp time.Time) Propagation {
+	return Propagation{
+		timestamp:    timestamp,
+		accumulative: 1,
+	}
+}
+
 func ready() {
 	if (len(CkbLogToFile) == 0) == (len(CkbLogToJournal) == 0) {
 		log.Fatal("Must provide only one of ckb-log-to-file and ckb-log-to-journal")
@@ -76,10 +97,9 @@ func startInFile() {
 	log.Printf("[INFO][ckb_exporter] start monitoring logfile %s", CkbLogToFile)
 	for {
 		tailer, err := tail.TailFile(CkbLogToFile, tail.Config{
-			ReOpen: true,
-			Follow: true,
+			ReOpen:   true,
+			Follow:   true,
 			Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
-			Logger: tail.DiscardingLogger,
 		})
 		if err != nil {
 			log.Fatalf("error on tailing %s: %v", CkbLogToFile, err)
@@ -112,6 +132,11 @@ func handle(line string) {
 		return
 	}
 
+	if metric.Topic == "propagation" {
+		handle_propagation(metric)
+		return
+	}
+
 	for field, value := range metric.Fields {
 		name := fmt.Sprintf("%s_%s", metric.Topic, field)
 		if _, ok := seen[name]; !ok {
@@ -122,13 +147,74 @@ func handle(line string) {
 	}
 }
 
+func handle_propagation(metric Metric) {
+	// Initialize seen["propagation_xx"]
+	if _, ok := seen["propagation_50"]; !ok {
+		empty := make(map[string]string)
+		for _, p := range PROPAGATION_PERCENTAGES {
+			name := fmt.Sprintf("propagation_%d", p)
+			seen[name] = NewInstrumentSet(name, "elapsed", empty)
+		}
+	}
+
+	// NOTE: Currently assume all are compact block propagation
+	//
+	// {
+	//   "topic": "propagation",
+	//   "tags": { "compact_block": BLOCK_HASH },
+	//   "fields" { "total_peers": TOTAL_PEERS }
+	// }
+	block_hash := metric.Tags["compact_block"]
+	total_peers := metric.Fields["total_peers"]
+	timestamp := time.Now()
+
+	// Initialize propagations[BLOCK_HASH] when we firstly seen this block
+	if _, ok := propagations[block_hash]; !ok {
+		propagations[block_hash] = NewPropagation(timestamp)
+	}
+
+	// Accumalate propagations
+	prop := propagations[block_hash]
+	prop.accumulative += 1
+	propagations[block_hash] = prop
+	if prop.accumulative < PROPAGATION_THRESHOLD {
+		return
+	}
+
+	// Statistics
+	for _, p := range PROPAGATION_PERCENTAGES {
+		if (prop.accumulative-1)*100 < total_peers*p {
+			if prop.accumulative*100 >= total_peers*p {
+				name := fmt.Sprintf("propagation_%d", p)
+				elapsed := timestamp.Sub(prop.timestamp).Milliseconds()
+
+				set := seen[name]
+				set.Update(uint64(elapsed))
+			}
+		}
+	}
+
+	// Timely clear staled items
+	if timestamp.Sub(last_prune_propagations) > 5*60*time.Second {
+		last_prune_propagations = timestamp
+		for hash, prop := range propagations {
+			if timestamp.Sub(prop.timestamp) > 5*60*time.Second {
+				delete(propagations, hash)
+			}
+		}
+	}
+}
+
 func init() {
 	flag.StringVar(&Namespace, "namespace", "ckb", "namespace of metrics")
 	flag.StringVar(&Listen, "listen", "127.0.0.1:8316", "exported address to prometheus server")
 	flag.StringVar(&CkbLogToFile, "ckb-log-to-file", "", "the path to ckb log file")
 	flag.StringVar(&CkbLogToJournal, "ckb-log-to-journal", "", "the service name to ckb")
 	flag.Parse()
+
 	seen = make(map[string]InstrumentSet)
+	propagations = make(map[string]Propagation)
+	last_prune_propagations = time.Now()
 }
 
 func main() {
