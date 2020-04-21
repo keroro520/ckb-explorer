@@ -103,7 +103,8 @@ func startInFile(filepath string) {
 			Location: &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
 		})
 		if err != nil {
-			log.Fatalf("error on tailing %s: %v", filepath, err)
+			log.Printf("error on tailing %s: %v", filepath, err)
+            return
 		}
 		for line := range tailer.Lines {
 			if line.Err != nil {
