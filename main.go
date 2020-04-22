@@ -125,7 +125,8 @@ func startInFile(filepath string) {
 
 			metrics_chan <- metric
 		}
-		log.Printf("[INFO][ckb_exporter] reopen %s", filepath)
+		log.Printf("[INFO][ckb_exporter] reopen %s in 5s...", filepath)
+        time.Sleep(5 * time.Second)
 	}
 }
 
