@@ -163,6 +163,8 @@ func handle_propagation(metric Metric) {
 			name := fmt.Sprintf("propagation_%d", p)
 			seen[name] = NewInstrumentSet(name, "elapsed", empty)
 		}
+
+        seen["propagation_peers"] = NewInstrumentSet("propagation", "peers", empty)
 	}
 
 	// NOTE: Currently assume all are compact block propagation
@@ -185,6 +187,12 @@ func handle_propagation(metric Metric) {
 	prop := propagations[block_hash]
 	prop.accumulative += 1
 	propagations[block_hash] = prop
+
+    {
+        set := seen["propagation_peers"]
+        set.Update(uint64(total_peers))
+    }
+
 	if prop.accumulative < PROPAGATION_THRESHOLD {
 		return
 	}
